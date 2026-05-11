@@ -1,5 +1,0 @@
-id,timestamp,temperatura,accel_x,accel_y,accel_z,vibracion_total,alerta,motivo_alerta
-1,2026-04-21T22:08:10.308618,28.5,0.12,-0.03,0.05,0.1334,False,
-2,2026-04-21T22:08:10.318765,60.0,5.0,5.0,5.0,8.6603,True,Temperatura alta (60.0°C > 45.0°C) | Vibración alta (8.6603 m/s² > 2.0 m/s²)
-3,2026-04-21T22:10:05.857585,28.5,0.12,-0.03,0.05,0.1334,False,
-4,2026-04-21T22:10:05.876565,60.0,5.0,5.0,5.0,8.6603,True,Temperatura alta (60.0°C > 45.0°C) | Vibración alta (8.6603 m/s² > 2.0 m/s²)
