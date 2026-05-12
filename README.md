@@ -1,4 +1,4 @@
-# 🏭 CNC IoT — Clasificador de Estados Vibracionales · Edge AI
+# CNC IoT — Clasificador de Estados Vibracionales · Edge AI
 
 Proyecto de la **Especialización en Inteligencia Artificial aplicada a IoT**  
 Universidad Autónoma de Occidente · Práctica 4 — MLP en ESP32 (TinyML / Edge AI)
