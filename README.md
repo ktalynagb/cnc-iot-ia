@@ -10,8 +10,8 @@ Universidad Autónoma de Occidente · Práctica 4 — MLP en ESP32 (TinyML / Edg
 | Rol | Persona | Responsabilidad |
 |-----|---------|-----------------|
 | Hardware & Recolección | Valentina | ESP32-C3 + MPU-6050 + DHT22 · Firmware de captura de datos etiquetados |
-| Entrenamiento MLP | David | Dataset CSV · Entrenamiento Python · Export de pesos a C++ |
-| Firmware & Despliegue | Ktalyna | Inferencia MLP en ESP32 · Forward pass en C++ · Integración Edge AI |
+| Entrenamiento MLP | David | Dataset CSV · Entrenamiento Keras/TF · Export a TF Lite |
+| Firmware & Despliegue | Ktalyna | Inferencia TF Lite Micro en ESP32 · Integración Edge AI |
 
 ---
 
@@ -60,8 +60,9 @@ Ahora (Edge AI):      ESP32 → Predicción local en < 1ms → Acción inmediata
 │              Normalización Z-score               │
 │                      │                           │
 │         ┌────────────▼────────────┐              │
-│         │    MLP: 8 → 16 → 3     │  TinyML      │
-│         │   ReLU      Softmax     │  Edge AI     │
+│         │  TF Lite Micro (MLP)   │  TinyML      │
+│         │  8 → 16 → 3            │  Edge AI     │
+│         │  ReLU      Softmax     │              │
 │         └────────────┬────────────┘              │
 │                      │                           │
 │         REPOSO / OPERACION_NORMAL / ANOMALIA     │
@@ -78,10 +79,10 @@ Ahora (Edge AI):      ESP32 → Predicción local en < 1ms → Acción inmediata
 |------|------------|-------------|
 | 1. Recolección de datos | Valentina + David | ESP32 graba CSV con etiquetas 0/1/2 |
 | 2. Feature Engineering | David (Python) | Media y varianza de ventana de 32 muestras |
-| 3. Entrenamiento MLP | David (Python/Colab) | sklearn MLPClassifier 8→16→3 |
+| 3. Entrenamiento MLP | David (Keras/Colab) | tf.keras.Sequential 8→16→3 |
 | 4. Evaluación | David | Accuracy, Loss, matriz de confusión |
-| 5. Exportación (Compilation) | David → `export_weights.py` | Pesos Python → arrays C++ |
-| 6. Despliegue Edge | Ktalyna | Forward pass en ESP32, sin librerías externas |
+| 5. Exportación (Compilation) | David → `export_weights.py` | Keras → .tflite → model.h + scaler_params.h |
+| 6. Despliegue Edge | Ktalyna | TF Lite Micro en ESP32 |
 
 ---
 
@@ -89,7 +90,7 @@ Ahora (Edge AI):      ESP32 → Predicción local en < 1ms → Acción inmediata
 
 | Componente | Conexión | Función |
 |------------|----------|---------|
-| ESP32-C3 Super Mini | — | Microcontrolador. Corre la inferencia MLP en tiempo real |
+| ESP32-C3 Super Mini | — | Microcontrolador. Corre la inferencia TF Lite Micro en tiempo real |
 | MPU-6050 | SDA=GPIO8, SCL=GPIO9 | Acelerómetro I²C. Mide vibración X, Y, Z a ~100Hz |
 | DHT22 | GPIO0 | Sensor temperatura (°C) y humedad (%) |
 | LED (indicador) | GPIO10 | Se enciende cuando se detecta Anomalía (clase 2) |
@@ -127,18 +128,19 @@ cnc-iot-ia/
 │       └── credentials.h         # WiFi (NO subir credenciales reales)
 ├── firmware/
 │   └── inference/
-│       ├── cnc_mlp_inference.ino # Firmware inferencia Edge AI (Ktalyna)
-│       ├── mlp_inference.h       # Forward pass MLP en C++ puro
-│       └── model_weights.h       # Pesos del modelo (generado por export_weights.py)
+│       ├── cnc_mlp_inference.ino # Firmware inferencia TF Lite Micro (Ktalyna)
+│       ├── model.h               # Modelo TF Lite como array C++ (generado por David)
+│       └── scaler_params.h       # Parámetros normalización Z-score (generado por David)
 ├── data/
 │   ├── reposo.csv                # Dataset clase 0 (David)
 │   ├── operacion_normal.csv      # Dataset clase 1 (David)
 │   └── anomalia.csv              # Dataset clase 2 (David)
 ├── model/
-│   ├── train_mlp.py              # Script entrenamiento (David)
-│   ├── export_weights.py         # Exportar pesos Python → C++ (David → Ktalyna)
-│   ├── mlp_model.pkl             # Modelo entrenado serializado
-│   └── scaler.pkl                # Parámetros de normalización
+│   ├── train_mlp.py              # Script entrenamiento Keras (David)
+│   ├── export_weights.py         # Keras → .tflite → model.h + scaler_params.h (David)
+│   ├── model.tflite              # Modelo exportado
+│   ├── mlp_model.keras           # Modelo Keras guardado
+│   └── scaler.pkl                # StandardScaler serializado
 └── README.md
 ```
 
@@ -167,21 +169,21 @@ timestamp,accel_x,accel_y,accel_z,temperatura,humedad,label
 
 ```bash
 # 1. Instalar dependencias
-pip install scikit-learn numpy pandas matplotlib joblib
+pip install tensorflow scikit-learn numpy pandas matplotlib joblib
 
-# 2. Entrenar el modelo
+# 2. Entrenar el modelo en Keras
 python model/train_mlp.py
 
-# 3. Exportar pesos a C++
+# 3. Exportar a TF Lite y generar archivos para el ESP32
 python model/export_weights.py
-# → Genera: firmware/inference/model_weights.h
+# → Genera: firmware/inference/model.h
+# → Genera: firmware/inference/scaler_params.h
 ```
 
-El script de entrenamiento genera:
-- `model/mlp_model.pkl` — modelo serializado
-- `model/scaler.pkl` — parámetros de normalización
-- Gráficas de Accuracy/Loss
-- `firmware/inference/model_weights.h` — listo para el ESP32
+El script de exportación genera:
+- `model/model.tflite` — modelo TF Lite
+- `firmware/inference/model.h` — array C++ listo para Arduino
+- `firmware/inference/scaler_params.h` — parámetros de normalización para el ESP32
 
 ---
 
@@ -189,20 +191,23 @@ El script de entrenamiento genera:
 
 ```
 1. Abrir Arduino IDE
-2. Abrir firmware/inference/cnc_mlp_inference.ino
-3. Verificar que model_weights.h tiene los pesos reales (no placeholders)
-4. Seleccionar placa: ESP32C3 Dev Module
-5. Compilar y cargar
-6. Abrir Serial Monitor a 115200 baud
+2. Instalar librería: TFLite_ESP32 by Eloquent Arduino
+3. Abrir firmware/inference/cnc_mlp_inference.ino
+4. Verificar que model.h y scaler_params.h tienen los valores reales (generados por David)
+5. Seleccionar placa: ESP32C3 Dev Module
+6. Compilar y cargar
+7. Abrir Serial Monitor a 115200 baud
 ```
 
 Salida esperada en Serial Monitor:
 ```
-=== FLUX CNC — MLP Edge Inference ===
+=== FLUX CNC — TF Lite Micro Edge Inference ===
+Arena usada: XXXX bytes
+Listo. Recolectando ventana inicial...
 ──────────────────────────────
-Temp: 27.40°C  Hum: 62.10%
-Accel media  X:0.012 Y:-0.003 Z:9.810
-Accel var    X:0.0001 Y:0.0001 Z:0.0002
+Temp: 27.40 C  Hum: 62.10%
+Media   X:0.012 Y:-0.003 Z:9.810
+Varianza X:0.0001 Y:0.0001 Z:0.0002
 Prediccion: [1] OPERACION_NORMAL
 Probs: R=0.02 ON=0.95 AN=0.03
 ```
@@ -212,10 +217,9 @@ Probs: R=0.02 ON=0.95 AN=0.03
 ## Dependencias Arduino
 
 Instalar desde el Library Manager del Arduino IDE:
+- **TFLite_ESP32** by Eloquent Arduino
 - **DHT sensor library** by Adafruit
 - **Wire** (incluida en ESP32 core)
-
-> No se requiere TensorFlow Lite ni librerías de ML — el forward pass está implementado en C++ puro en `mlp_inference.h`.
 
 ---
 
@@ -227,7 +231,7 @@ Instalar desde el Library Manager del Arduino IDE:
 | Latencia | ~100ms+ | ~500ms+ | < 1ms |
 | Requiere internet | Sí | Sí | No |
 | Tipo de análisis | Umbrales fijos | Umbrales fijos | Red neuronal MLP |
-| Escala | Multi-dispositivo | Multi-dispositivo | Un dispositivo |
+| Framework ML | — | — | TF Lite Micro |
 
 ---
 
@@ -236,7 +240,7 @@ Instalar desde el Library Manager del Arduino IDE:
 | Criterio | Cómo verificarlo |
 |----------|-----------------|
 | ✅ Dataset etiquetado | Archivos CSV en `data/` con 600-1000 muestras totales |
-| ✅ Modelo entrenado | `model/mlp_model.pkl` + gráficas Accuracy/Loss |
-| ✅ Pesos exportados | `firmware/inference/model_weights.h` generado por `export_weights.py` |
+| ✅ Modelo entrenado | `model/mlp_model.keras` + gráficas Accuracy/Loss |
+| ✅ Exportación TF Lite | `model/model.tflite` + `firmware/inference/model.h` generados |
 | ✅ Inferencia en ESP32 | Serial Monitor mostrando predicciones en tiempo real |
 | ✅ README con lógica | Este documento |
