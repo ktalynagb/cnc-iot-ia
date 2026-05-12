@@ -9,7 +9,7 @@ Universidad Autónoma de Occidente · Práctica 4 — MLP en ESP32 (TinyML / Edg
 
 | Rol | Persona | Responsabilidad |
 |-----|---------|-----------------|
-| Hardware & Recolección | Valentina | ESP32-C3 + MPU-6050 + DHT22 · Firmware de captura de datos etiquetados |
+| Hardware & Recolección | Valentina | ESP32-C3 + MPU-6050 + DHT11 · Firmware de captura de datos etiquetados |
 | Entrenamiento MLP | David | Dataset CSV · Entrenamiento Keras/TF · Export a TF Lite |
 | Firmware & Despliegue | Ktalyna | Inferencia TF Lite Micro en ESP32 · Integración Edge AI |
 
@@ -51,7 +51,7 @@ Ahora (Edge AI):      ESP32 → Predicción local en < 1ms → Acción inmediata
 │              ESP32-C3 Super Mini                 │
 │                                                  │
 │  MPU-6050 ──► Buffer circular (32 muestras)      │
-│  DHT22    ──► Temperatura · Humedad              │
+│  DHT11    ──► Temperatura · Humedad              │
 │                      │                           │
 │              Feature Engineering                 │
 │         media(x,y,z) · varianza(x,y,z)          │
@@ -92,7 +92,7 @@ Ahora (Edge AI):      ESP32 → Predicción local en < 1ms → Acción inmediata
 |------------|----------|---------|
 | ESP32-C3 Super Mini | — | Microcontrolador. Corre la inferencia TF Lite Micro en tiempo real |
 | MPU-6050 | SDA=GPIO8, SCL=GPIO9 | Acelerómetro I²C. Mide vibración X, Y, Z a ~100Hz |
-| DHT22 | GPIO0 | Sensor temperatura (°C) y humedad (%) |
+| DHT11 | GPIO0 | Sensor temperatura (°C) y humedad (%) |
 | LED (indicador) | GPIO10 | Se enciende cuando se detecta Anomalía (clase 2) |
 
 ⚠️ GPIO21 dañado — no usar.
@@ -111,10 +111,10 @@ Sobre una ventana deslizante de **32 muestras** (~320ms a 100Hz):
 | 3 | varianza(accel_y) | Varianza del eje Y |
 | 4 | media(accel_z) | Promedio del eje Z |
 | 5 | varianza(accel_z) | Varianza del eje Z |
-| 6 | temperatura | Valor directo DHT22 (°C) |
-| 7 | humedad | Valor directo DHT22 (%) |
+| 6 | temperatura | Valor directo DHT11 (°C) |
+| 7 | humedad | Valor directo DHT11 (%) |
 
-> La temperatura y humedad se usan como valor directo porque el DHT22 mide lento (cada 2s) — calcular varianza no aporta información útil para detección de vibración.
+> La temperatura y humedad se usan como valor directo porque el DHT11 mide lento (cada 2s) — calcular varianza no aporta información útil para detección de vibración.
 
 ---
 
@@ -123,8 +123,9 @@ Sobre una ventana deslizante de **32 muestras** (~320ms a 100Hz):
 ```
 cnc-iot-ia/
 ├── Esp32/
+│   ├── captura_datos.py          # Script Python — guarda CSV etiquetados desde Serial (Valentina)
 │   └── cnc_iot_esp32/
-│       ├── cnc_iot_esp32.ino     # Firmware recolección de datos (Valentina)
+│       ├── cnc_iot_esp32.ino     # Firmware de captura: MPU-6050 + DHT11 → Serial CSV (Valentina)
 │       └── credentials.h         # WiFi (NO subir credenciales reales)
 ├── firmware/
 │   └── inference/
@@ -148,19 +149,41 @@ cnc-iot-ia/
 
 ## Inicio rápido — Recolección de datos (Valentina)
 
-El ESP32 graba los datos en un archivo CSV en el computador via Serial.
-Capturar **200-350 muestras por clase** con el ESP32 en cada estado:
+El firmware `cnc_iot_esp32.ino` transmite lecturas del MPU-6050 y DHT11 por Serial a ~100 Hz.
+El script `captura_datos.py` las recibe y las guarda en CSV etiquetados listos para el entrenamiento.
+
+**1. Subir el firmware al ESP32**
+
+```
+Arduino IDE → Abrir Esp32/cnc_iot_esp32/cnc_iot_esp32.ino
+Placa: ESP32C3 Dev Module
+Compilar y cargar
+```
+
+**2. Instalar dependencias Python (una sola vez)**
 
 ```bash
-# Clase 0: máquina apagada → guardar como data/reposo.csv
-# Clase 1: maquinado normal → guardar como data/operacion_normal.csv
-# Clase 2: golpear/sacudir la máquina → guardar como data/anomalia.csv
+pip install pyserial
 ```
 
-Formato del CSV:
+**3. Correr el script de captura**
+
+```bash
+python Esp32/captura_datos.py
 ```
-timestamp,accel_x,accel_y,accel_z,temperatura,humedad,label
-1234567890,0.12,-0.03,9.81,27.4,62.1,0
+
+El script detecta el puerto automáticamente, pregunta qué clase capturar y muestra una barra de progreso. Capturar **200-350 muestras por clase** en cada estado:
+
+| Clase | Estado | Cómo simularlo |
+|-------|--------|----------------|
+| 0 | Reposo | ESP32 quieto, máquina apagada |
+| 1 | Operación Normal | ESP32 sobre máquina en funcionamiento normal |
+| 2 | Anomalía | Golpear/sacudir el ESP32 fuertemente |
+
+Formato del CSV generado:
+```
+timestamp_ms,accel_x,accel_y,accel_z,temperatura,humedad,label
+1234567890,0.1200,-0.0300,9.8100,27.40,62.10,0
 ```
 
 ---
@@ -217,9 +240,14 @@ Probs: R=0.02 ON=0.95 AN=0.03
 ## Dependencias Arduino
 
 Instalar desde el Library Manager del Arduino IDE:
-- **TFLite_ESP32** by Eloquent Arduino
-- **DHT sensor library** by Adafruit
+- **TFLite_ESP32** by Eloquent Arduino — para inferencia (Ktalyna)
+- **DHT sensor library** by Adafruit — para DHT11 (ambos firmwares)
 - **Wire** (incluida en ESP32 core)
+
+Dependencia Python (recolección de datos):
+```bash
+pip install pyserial
+```
 
 ---
 
