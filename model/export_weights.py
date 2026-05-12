@@ -1,106 +1,102 @@
 """
 model/export_weights.py — FLUX CNC IoT · Edge AI
 ==================================================
-Genera automáticamente el archivo model_weights.h
-con los pesos del modelo entrenado en Python.
+Exporta el modelo Keras entrenado a TF Lite y genera
+los archivos necesarios para el firmware del ESP32.
 
-Uso (después de entrenar el modelo):
+Uso (después de entrenar):
     python model/export_weights.py
 
-Requiere:
-    - modelo entrenado guardado como 'model/mlp_model.pkl'
-      (o adaptar la carga según el formato que use David)
-
-Salida:
-    - firmware/inference/model_weights.h  (listo para copiar al ESP32)
+Salidas:
+    model/model.tflite               → modelo TF Lite
+    firmware/inference/model.h       → array C++ para Arduino
+    firmware/inference/scaler_params.h → parámetros normalización
 """
 
 import numpy as np
-import joblib
-import os
+import tensorflow as tf
+import joblib, os
 
-# ── Cargar modelo entrenado ───────────────────────────────────────────────────
-MODEL_PATH  = "model/mlp_model.pkl"        # Ajustar según formato de David
-SCALER_PATH = "model/scaler.pkl"           # StandardScaler de sklearn
-OUTPUT_PATH = "firmware/inference/model_weights.h"
+MODEL_PATH    = "model/mlp_model.keras"
+SCALER_PATH   = "model/scaler.pkl"
+TFLITE_PATH   = "model/model.tflite"
+MODEL_H_PATH  = "firmware/inference/model.h"
+SCALER_H_PATH = "firmware/inference/scaler_params.h"
 
-print(f"Cargando modelo desde {MODEL_PATH}...")
-model  = joblib.load(MODEL_PATH)
+print("Cargando modelo Keras...")
+model  = tf.keras.models.load_model(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
 
-# ── Extraer pesos ─────────────────────────────────────────────────────────────
-# Asume sklearn MLPClassifier con 1 capa oculta
-W1     = model.coefs_[0].T      # shape: (16, 8)
-b1     = model.intercepts_[0]   # shape: (16,)
-W2     = model.coefs_[1].T      # shape: (3, 16)
-b2     = model.intercepts_[1]   # shape: (3,)
+# ── Convertir a TF Lite ──────────────────────────────────────────────────
+print("Convirtiendo a TF Lite (float32)...")
+converter    = tf.lite.TFLiteConverter.from_keras_model(model)
+tflite_model = converter.convert()
 
-# Parámetros de normalización
-mean   = scaler.mean_            # shape: (8,)
-std    = scaler.scale_           # shape: (8,)
+os.makedirs("model", exist_ok=True)
+with open(TFLITE_PATH, "wb") as f:
+    f.write(tflite_model)
+print(f"  -> {TFLITE_PATH} ({len(tflite_model)} bytes)")
 
-print(f"W1: {W1.shape}  b1: {b1.shape}")
-print(f"W2: {W2.shape}  b2: {b2.shape}")
-print(f"Normalización: mean={mean.round(4)}  std={std.round(4)}")
+# ── Generar model.h ──────────────────────────────────────────────────────
+print("Generando model.h...")
+os.makedirs(os.path.dirname(MODEL_H_PATH), exist_ok=True)
 
-# ── Función auxiliar para formatear arrays C++ ────────────────────────────────
-def fmt_1d(arr, name, dtype="float"):
-    vals = ", ".join(f"{v:.6f}f" for v in arr)
-    return f"const {dtype} {name}[{len(arr)}] = {{\n  {vals}\n}};\n"
+with open(TFLITE_PATH, "rb") as f:
+    data = f.read()
 
-def fmt_2d(arr, name, dtype="float"):
-    rows = []
-    for row in arr:
-        rows.append("  { " + ", ".join(f"{v:.6f}f" for v in row) + " }")
-    inner = ",\n".join(rows)
-    r, c = arr.shape
-    return f"const {dtype} {name}[{r}][{c}] = {{\n{inner}\n}};\n"
-
-# ── Generar archivo .h ────────────────────────────────────────────────────────
-header = f"""/**
- * model_weights.h — FLUX CNC IoT · Edge AI
- * ==========================================
- * ARCHIVO GENERADO AUTOMÁTICAMENTE por export_weights.py
+hex_array = ", ".join(f"0x{b:02x}" for b in data)
+model_h = f"""/**
+ * model.h - FLUX CNC IoT - Edge AI
+ * GENERADO AUTOMATICAMENTE por export_weights.py
  * NO EDITAR MANUALMENTE
- *
- * Arquitectura: {W1.shape[1]} entradas → {W1.shape[0]} neuronas ocultas → {W2.shape[0]} salidas
- *
- * Features (orden de las {W1.shape[1]} entradas):
- *   [0] media(accel_x)   [1] varianza(accel_x)
- *   [2] media(accel_y)   [3] varianza(accel_y)
- *   [4] media(accel_z)   [5] varianza(accel_z)
- *   [6] temperatura      [7] humedad
- *
- * Clases de salida:
- *   [0] Reposo   [1] Operacion Normal   [2] Anomalia
+ * Tamano del modelo: {len(data)} bytes
  */
 
 #pragma once
 
+const unsigned char g_model[] = {{
+  {hex_array}
+}};
+
+const unsigned int g_model_len = {len(data)};
 """
 
-content  = header
-content += "// ── Parámetros de normalización Z-score ──\n"
-content += fmt_1d(mean, "NORM_MEAN")
-content += "\n"
-content += fmt_1d(std,  "NORM_STD")
-content += "\n"
-content += "// ── Pesos capa 1: W1[16][8] ──\n"
-content += fmt_2d(W1, "W1")
-content += "\n"
-content += "// ── Bias capa 1: b1[16] ──\n"
-content += fmt_1d(b1, "BIAS_1")
-content += "\n"
-content += "// ── Pesos capa 2: W2[3][16] ──\n"
-content += fmt_2d(W2, "W2")
-content += "\n"
-content += "// ── Bias capa 2: b2[3] ──\n"
-content += fmt_1d(b2, "BIAS_2")
-content += "\n"
+with open(MODEL_H_PATH, "w") as f:
+    f.write(model_h)
+print(f"  -> {MODEL_H_PATH}")
 
-os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-with open(OUTPUT_PATH, "w") as f:
-    f.write(content)
+# ── Generar scaler_params.h ──────────────────────────────────────────────
+print("Generando scaler_params.h...")
+mean = scaler.mean_
+std  = scaler.scale_
 
-print(f"\n✓ Archivo generado: {OUTPUT_PATH}")
-print("  Copia el archivo al Arduino IDE y compila el firmware.")
+def fmt_array(arr, name):
+    vals = ", ".join(f"{v:.6f}f" for v in arr)
+    return f"const float {name}[{len(arr)}] = {{\n  {vals}\n}};\n"
+
+scaler_h = f"""/**
+ * scaler_params.h - FLUX CNC IoT - Edge AI
+ * GENERADO AUTOMATICAMENTE por export_weights.py
+ * NO EDITAR MANUALMENTE
+ */
+
+#pragma once
+
+{fmt_array(mean, "SCALER_MEAN")}
+{fmt_array(std,  "SCALER_STD")}
+"""
+
+with open(SCALER_H_PATH, "w") as f:
+    f.write(scaler_h)
+print(f"  -> {SCALER_H_PATH}")
+
+# ── Verificar ────────────────────────────────────────────────────────────
+print("\nVerificando modelo TF Lite...")
+interp = tf.lite.Interpreter(model_path=TFLITE_PATH)
+interp.allocate_tensors()
+inp = interp.get_input_details()
+out = interp.get_output_details()
+print(f"  Input:  {inp[0]['shape']}  {inp[0]['dtype']}")
+print(f"  Output: {out[0]['shape']}  {out[0]['dtype']}")
+print(f"\n  Exportacion completa! Tamano: {len(data)} bytes")
+print("  Copia firmware/inference/ al Arduino IDE y compila.")
