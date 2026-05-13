@@ -80,14 +80,28 @@ void setup() {
   while (!Serial) delay(10);
 
   Wire.begin(SDA_PIN, SCL_PIN);
-  mpuInit();
+
+  // Verificar que el MPU-6050 responde en el bus I2C
+  Wire.beginTransmission(MPU_ADDR);
+  if (Wire.endTransmission() == 0) {
+    Serial.println("#MPU-6050 detectado OK (0x68)");
+    mpuInit();
+  } else {
+    Serial.println("#ERROR: MPU-6050 no encontrado. Revisa SDA=GPIO8, SCL=GPIO9 y alimentacion 3.3V");
+  }
+
   dht.begin();
 
-  // Primera lectura DHT11 (necesita 2 s después de encender)
+  // Primera lectura DHT11 (necesita ~2 s después de encender)
   delay(2000);
   float t = dht.readTemperature();
   float h = dht.readHumidity();
-  if (!isnan(t) && !isnan(h)) { temp = t; hum = h; }
+  if (!isnan(t) && !isnan(h)) {
+    temp = t; hum = h;
+    Serial.println("#DHT11 detectado OK");
+  } else {
+    Serial.println("#ERROR: DHT11 sin respuesta. Revisa conexion en GPIO0 y resistencia pull-up 10k");
+  }
   lastDHT = millis();
 
   Serial.println("#FLUX CNC - Firmware de captura de datos");
