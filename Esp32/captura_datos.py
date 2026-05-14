@@ -26,7 +26,7 @@ import time
 
 # ── Configuración ────────────────────────────────────────────────────────────
 BAUDRATE       = 115200
-SAMPLES_TARGET = 1000   # muestras por sesión de captura
+SAMPLES_TARGET = 2000   # muestras por sesión de captura
 
 # Ruta a la carpeta data/ (sube un nivel desde Esp32/)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -218,10 +218,10 @@ def main():
         estado = "OK (>=200)" if n >= 200 else f"Faltan {200 - n}"
         print(f"  [{lbl}] {nombre:20s} {n:4d} muestras  —  {estado}")
     print(f"  Total: {total} muestras")
-    if total >= 1000:
-        print("\n  Dataset listo para entregar a David (>= 1000 muestras).")
+    if total >= 5000:
+        print("\n  Dataset listo para entregar a David (>= 5000 muestras).")
     else:
-        print(f"\n  Faltan {1000 - total} muestras para alcanzar el minimo de 1000.")
+        print(f"\n  Faltan {5000 - total} muestras para alcanzar el minimo de 5000.")
 
 
 if __name__ == "__main__":
