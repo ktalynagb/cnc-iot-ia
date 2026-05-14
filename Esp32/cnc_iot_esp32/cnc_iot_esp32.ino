@@ -26,7 +26,7 @@
 
 // ── Pines ──────────────────────────────────────────────────────────────────
 #define DHT_PIN         0
-#define DHT_TYPE        DHT11
+#define DHT_TYPE        DHT22
 #define MPU_ADDR        0x68
 #define SDA_PIN         8
 #define SCL_PIN         9
