@@ -7,25 +7,13 @@
  * Arquitectura: Entrada(8) → Oculta(16) → Salida(3)
  *
  * Features (8 entradas):
- *   [0] media(accel_x)    [1] varianza(accel_x)
- *   [2] media(accel_y)    [3] varianza(accel_y)
- *   [4] media(accel_z)    [5] varianza(accel_z)
- *   [6] temperatura       [7] humedad
+ * [0] media(accel_x)    [1] varianza(accel_x)
+ * [2] media(accel_y)    [3] varianza(accel_y)
+ * [4] media(accel_z)    [5] varianza(accel_z)
+ * [6] temperatura       [7] humedad
  *
  * Clases:
- *   0 = Reposo  |  1 = Operación Normal  |  2 = Anomalía
- *
- * Hardware:
- *   ESP32-C3 Super Mini · MPU-6050 SDA=GPIO8 SCL=GPIO9
- *   DHT22 GPIO0 · LED GPIO10
- *
- * Dependencias (instalar en Arduino IDE):
- *   - TFLite_ESP32 by Eloquent Arduino
- *   - Adafruit DHT sensor library
- *
- * Archivos requeridos (generados por David):
- *   - model.h       → xxd -i model.tflite > model.h
- *   - scaler_params.h → generado por export_weights.py
+ * 0 = Reposo  |  1 = Operación Normal  |  2 = Anomalía
  */
 
 #include <Wire.h>
@@ -34,6 +22,7 @@
 #include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "model.h"
 #include "scaler_params.h"
 
@@ -41,7 +30,7 @@
 #define DHT_PIN       0
 #define DHT_TYPE      DHT22
 #define MPU_ADDR      0x68
-#define LED_PIN       10
+#define LED_PIN       10   
 
 // ── Configuración ──────────────────────────────────────────────────────────
 #define WINDOW_SIZE   32
@@ -49,15 +38,20 @@
 #define NUM_INPUTS     8
 #define NUM_OUTPUTS    3
 
-// ── TF Lite Micro ──────────────────────────────────────────────────────────
-constexpr int TENSOR_ARENA_SIZE = 8 * 1024;
-uint8_t tensor_arena[TENSOR_ARENA_SIZE];
+// ── TF Lite Micro (Globales) ───────────────────────────────────────────────
+namespace {
+  tflite::ErrorReporter* error_reporter = nullptr;
+  const tflite::Model* tf_model       = nullptr;
+  tflite::MicroInterpreter* interpreter    = nullptr;
+  TfLiteTensor* input_tensor   = nullptr;
+  TfLiteTensor* output_tensor  = nullptr;
 
-const tflite::Model*         tf_model     = nullptr;
-tflite::MicroInterpreter*    interpreter  = nullptr;
-TfLiteTensor*                input_tensor = nullptr;
-TfLiteTensor*                output_tensor= nullptr;
-tflite::AllOpsResolver       resolver;
+  static tflite::MicroErrorReporter micro_error_reporter;
+  static tflite::AllOpsResolver     resolver;
+
+  constexpr int TENSOR_ARENA_SIZE = 8 * 1024;
+  alignas(16) uint8_t tensor_arena[TENSOR_ARENA_SIZE];
+}
 
 // ── Objetos y buffers ──────────────────────────────────────────────────────
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -76,90 +70,101 @@ int  argmax(float*, int);
 // ────────────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  while (!Serial) delay(10);
-  Serial.println("=== FLUX CNC — TF Lite Micro Edge Inference ===");
+  delay(2000);
+  Serial.println("\n=== FLUX CNC IoT - Edge AI Inference ===");
 
-  Wire.begin(8, 9);
-  mpu_init();
-  dht.begin();
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  error_reporter = &micro_error_reporter;
 
-  // Inicializar TF Lite Micro
   tf_model = tflite::GetModel(g_model);
   if (tf_model->version() != TFLITE_SCHEMA_VERSION) {
-    Serial.println("ERROR: version del modelo incompatible");
-    while (1);
+    TF_LITE_REPORT_ERROR(error_reporter, 
+      "Modelo con versión %d no compatible con schema %d",
+      tf_model->version(), TFLITE_SCHEMA_VERSION);
+    return;
   }
+  Serial.println("[TFLite] Modelo cargado correctamente.");
 
   static tflite::MicroInterpreter static_interpreter(
-    tf_model, resolver, tensor_arena, TENSOR_ARENA_SIZE
+      tf_model, 
+      resolver, 
+      tensor_arena, 
+      TENSOR_ARENA_SIZE, 
+      error_reporter
   );
   interpreter = &static_interpreter;
 
-  if (interpreter->AllocateTensors() != kTfLiteOk) {
-    Serial.println("ERROR: AllocateTensors fallo");
-    while (1);
+  TfLiteStatus allocate_status = interpreter->AllocateTensors();
+  if (allocate_status != kTfLiteOk) {
+    Serial.println("[ERROR] AllocateTensors() falló");
+    return;
   }
+  Serial.println("[TFLite] Tensores asignados.");
 
-  input_tensor  = interpreter->input(0);
+  input_tensor = interpreter->input(0);
   output_tensor = interpreter->output(0);
 
-  Serial.printf("Arena usada: %d bytes\n", interpreter->arena_used_bytes());
-  Serial.println("Listo. Recolectando ventana inicial...");
+  Wire.begin(8, 9); // SDA=GPIO8, SCL=GPIO9 para ESP32-C3
+  mpu_init();
+  dht.begin();
+  pinMode(LED_PIN, OUTPUT);
+  
+  Serial.println("=== Sistema Listo para Inferencia ===");
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 void loop() {
   float ax, ay, az;
   mpu_read_accel(&ax, &ay, &az);
-
+  
   buf_x[buf_idx] = ax;
   buf_y[buf_idx] = ay;
   buf_z[buf_idx] = az;
   buf_idx = (buf_idx + 1) % WINDOW_SIZE;
+  
   if (buf_idx == 0) buf_ready = true;
 
   if (buf_ready) {
     float features[NUM_INPUTS];
     compute_features(buf_x, buf_y, buf_z, WINDOW_SIZE, features);
-
+    
     static float temp = 25.0f, hum = 50.0f;
     static unsigned long last_dht = 0;
+    
     if (millis() - last_dht > 2000) {
       float t = dht.readTemperature();
       float h = dht.readHumidity();
       if (!isnan(t) && !isnan(h)) { temp = t; hum = h; }
       last_dht = millis();
     }
+    
     features[6] = temp;
     features[7] = hum;
 
     normalize_features(features);
-
-    for (int i = 0; i < NUM_INPUTS; i++)
+    
+    for (int i = 0; i < NUM_INPUTS; i++) {
       input_tensor->data.f[i] = features[i];
-
+    }
+    
     if (interpreter->Invoke() != kTfLiteOk) {
-      Serial.println("ERROR: Invoke fallo"); return;
+      Serial.println("ERROR: Invoke fallo"); 
+      return;
     }
 
     float probs[NUM_OUTPUTS];
-    for (int i = 0; i < NUM_OUTPUTS; i++)
+    for (int i = 0; i < NUM_OUTPUTS; i++) {
       probs[i] = output_tensor->data.f[i];
-
+    }
+    
     int clase = argmax(probs, NUM_OUTPUTS);
 
     Serial.println("──────────────────────────────");
     Serial.printf("Temp: %.2f C  Hum: %.2f%%\n", temp, hum);
-    Serial.printf("Media   X:%.3f Y:%.3f Z:%.3f\n",
-                  features[0], features[2], features[4]);
-    Serial.printf("Varianza X:%.4f Y:%.4f Z:%.4f\n",
-                  features[1], features[3], features[5]);
+    Serial.printf("Media   X:%.3f Y:%.3f Z:%.3f\n", features[0], features[2], features[4]);
+    Serial.printf("Varianza X:%.4f Y:%.4f Z:%.4f\n", features[1], features[3], features[5]);
     Serial.printf("Prediccion: [%d] %s\n", clase, LABELS[clase]);
-    Serial.printf("Probs: R=%.2f ON=%.2f AN=%.2f\n",
-                  probs[0], probs[1], probs[2]);
-
+    Serial.printf("Probs: R=%.2f ON=%.2f AN=%.2f\n", probs[0], probs[1], probs[2]);
+    
     digitalWrite(LED_PIN, clase == 2 ? HIGH : LOW);
     buf_ready = false;
   }
@@ -194,6 +199,7 @@ void compute_features(float* bx, float* by, float* bz, int n, float* f) {
   float sx=0,sy=0,sz=0;
   for(int i=0;i<n;i++){sx+=bx[i];sy+=by[i];sz+=bz[i];}
   float mx=sx/n,my=sy/n,mz=sz/n;
+  
   float vx=0,vy=0,vz=0;
   for(int i=0;i<n;i++){
     vx+=(bx[i]-mx)*(bx[i]-mx);
