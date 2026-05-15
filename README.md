@@ -272,3 +272,79 @@ pip install pyserial
 | ✅ Exportación TF Lite | `model/model.tflite` + `firmware/inference/model.h` generados |
 | ✅ Inferencia en ESP32 | Serial Monitor mostrando predicciones en tiempo real |
 | ✅ README con lógica | Este documento |
+
+---
+
+## Model training & export (David)
+
+All model steps are reproducible via `make` using the `uv` virtual environment.
+
+### Crear entorno virtual e instalar dependencias
+
+```bash
+make env
+# O manualmente:
+python -m venv uv
+source uv/bin/activate          # Linux/macOS
+# uv\Scripts\activate           # Windows
+pip install tensorflow scikit-learn numpy pandas plotly joblib kaleido
+```
+
+### Pipeline completo
+
+```bash
+# 1. Contar muestras por clase
+make count
+# → model/data_counts.json
+
+# 2. Preprocesar: balanceo, features, splits, scaler
+make preprocess
+# → model/train.csv, model/val.csv, model/test.csv
+# → model/scaler.pkl, firmware/inference/scaler_params.h
+
+# 3. Entrenar el modelo MLP
+make train
+# → model/mlp_model.keras, model/training_history.json
+
+# 4. Exportar para firmware
+make export
+# → model/model.tflite, firmware/inference/model.h
+
+# 5. Validar y generar reportes
+make validate
+# → model/report.txt, model/figures/
+
+# O ejecutar todo en un paso:
+make all
+```
+
+### Arquitectura del modelo
+
+| Capa | Tipo | Activación |
+|------|------|-----------|
+| Input | Dense | — |
+| Oculta | Dense(16) | ReLU |
+| Salida | Dense(3) | Softmax |
+
+- Épocas: 32 · Batch: 32 · Adam(lr=0.01) · Seed: 42
+- Balanceo: downsampling a n_min ventanas por clase (seed=42)
+- Split estratificado: 70% train / 20% val / 10% test
+
+### Resultados (seed=42, 32 épocas)
+
+| Métrica | Keras | TFLite |
+|---------|-------|--------|
+| Test Accuracy | **0.9149** | **0.9149** |
+| Max diff probabilidades | — | 2.2e-07 |
+
+### Artefactos generados
+
+| Archivo | Descripción |
+|---------|-------------|
+| `model/mlp_model.keras` | Modelo Keras (mejor val_loss) |
+| `model/model.tflite` | Modelo TFLite float32 |
+| `model/scaler.pkl` | StandardScaler serializado |
+| `firmware/inference/model.h` | Array C++ para ESP32 |
+| `firmware/inference/scaler_params.h` | Parámetros Z-score para ESP32 |
+| `model/report.txt` | Métricas y validación |
+| `model/figures/` | Gráficas Plotly (HTML + PNG) |

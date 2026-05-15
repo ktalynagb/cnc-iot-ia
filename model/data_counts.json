@@ -1,0 +1,21 @@
+{
+  "per_class": {
+    "0": 6000,
+    "1": 5000,
+    "2": 5250
+  },
+  "total": 16250,
+  "n_min": 5000,
+  "classes": {
+    "0": "reposo",
+    "1": "operacion_normal",
+    "2": "anomalia"
+  },
+  "n_min_windows": 156,
+  "windows_per_class": {
+    "0": 187,
+    "1": 156,
+    "2": 164
+  },
+  "total_balanced_windows": 468
+}
