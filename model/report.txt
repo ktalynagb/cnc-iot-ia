@@ -1,0 +1,67 @@
+============================================================
+FLUX CNC IoT - MLP Pipeline Report
+============================================================
+
+=== Conteo de datos raw ===
+  Clase 0 (reposo): 6000 muestras
+  Clase 1 (operacion_normal): 5000 muestras
+  Clase 2 (anomalia): 5250 muestras
+  Total raw: 16250
+
+=== Ventanas extraídas (window=32, non-overlapping) ===
+  Clase 0: 187 ventanas
+  Clase 1: 156 ventanas
+  Clase 2: 164 ventanas
+  n_min (ventanas): 156
+  Total balanceado: 468 ventanas
+
+=== Splits (70/20/10 estratificado, seed=42) ===
+  Train: 327, Val: 94, Test: 47
+
+=== Scaler (StandardScaler, fit solo en train) ===
+  Mean: [9.624130437691136, 0.4745960708961908, 0.10396514717125382, 0.6220185817406835, -2.3364575688073392, 0.7640932948913015, 30.042660550458645, 68.52629969418959]
+  Std:  [0.17849146124527102, 0.7485474671156178, 0.21094043064876847, 0.7075267384383802, 0.3128508078353766, 0.9364673731831141, 0.19751888368168546, 0.3745296584225788]
+  Diff scaler_params.h vs scaler.pkl:
+    mean: max_diff=4.50e-07
+    std:  max_diff=4.67e-07
+
+=== Métricas modelo (test set) ===
+  Keras acc:  0.9149
+  TFLite acc: 0.9149
+  Max prob diff Keras vs TFLite: 0.00000022
+
+=== Classification Report (Keras) ===
+              precision    recall  f1-score   support
+
+      Reposo       0.79      1.00      0.88        15
+   Op.Normal       1.00      0.75      0.86        16
+    Anomalía       1.00      1.00      1.00        16
+
+    accuracy                           0.91        47
+   macro avg       0.93      0.92      0.91        47
+weighted avg       0.93      0.91      0.91        47
+
+=== Matriz de Confusión (Keras, test) ===
+[[15  0  0]
+ [ 4 12  0]
+ [ 0  0 16]]
+
+=== Figuras generadas ===
+  model/figures/loss_curve.html + .png
+  model/figures/accuracy_curve.html + .png
+  model/figures/confusion_matrix.html + .png
+
+=== Artefactos generados ===
+  model/mlp_model.keras
+  model/model.tflite
+  model/scaler.pkl
+  firmware/inference/model.h
+  firmware/inference/scaler_params.h
+
+=== Pasos siguientes (deploy en ESP32) ===
+  1. Abrir Arduino IDE
+  2. Instalar TFLite_ESP32 by Eloquent Arduino
+  3. Abrir firmware/inference/cnc_mlp_inference.ino
+  4. Verificar que model.h y scaler_params.h están en el mismo directorio
+  5. Compilar y cargar en ESP32-C3
+  6. Abrir Serial Monitor a 115200 baud
