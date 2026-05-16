@@ -69,7 +69,7 @@
 #endif
 
 // ── Configuración del demo ──────────────────────────────────────────────────
-#define DEMO_DELAY_MS  500   // Pausa entre muestras (ms). Reducir para acelerar.
+#define DEMO_DELAY_MS  1000   // Pausa entre muestras (ms). Reducir para acelerar.
 #define LED_PIN        10    // LED indicador de Anomalía (GPIO10, igual que cnc_mlp_inference.ino)
 #define NUM_INPUTS      8
 #define NUM_OUTPUTS     3
