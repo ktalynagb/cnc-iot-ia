@@ -64,29 +64,21 @@ flowchart TD
 
 ## Arquitectura del sistema
 
-```
-┌─────────────────────────────────────────────────┐
-│              ESP32-C3 Super Mini                 │
-│                                                  │
-│  MPU-6050 ──► Buffer circular (32 muestras)      │
-│  DHT11    ──► Temperatura · Humedad              │
-│                      │                           │
-│              Feature Engineering                 │
-│         media(x,y,z) · varianza(x,y,z)          │
-│              temp · humedad = 8 features         │
-│                      │                           │
-│              Normalización Z-score               │
-│                      │                           │
-│         ┌────────────▼────────────┐              │
-│         │  TF Lite Micro (MLP)   │  TinyML      │
-│         │  8 → 16 → 3            │  Edge AI     │
-│         │  ReLU      Softmax     │              │
-│         └────────────┬────────────┘              │
-│                      │                           │
-│         REPOSO / OPERACION_NORMAL / ANOMALIA     │
-│                      │                           │
-│              Serial Monitor · LED                │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph "ESP32-C3 Super Mini"
+    direction TB
+    MPU["MPU-6050\n(acel X, Y, Z)"]
+    DHT["DHT22\n(temperatura · humedad)"]
+    MPU -->|lecturas acelerómetro| Buffer((Buffer circular\n32 muestras))
+    DHT -->|lecturas periódicas| Buffer
+    Buffer --> FE["Feature engineering\n- media(x,y,z)\n- varianza(x,y,z)\n- temp, humedad\n→ 8 features"]
+    FE --> Norm["Normalización (Z‑score)\n(SCALER_MEAN / SCALER_STD)"]
+    Norm --> TF["TensorFlow Lite Micro\nMLP 8 → 16 → 3\n(ReLU → Softmax)"]
+    TF --> Pred["Predicción\n0 = REPOSO\n1 = OPERACION_NORMAL\n2 = ANOMALIA"]
+    Pred --> Serial["Salida Serial (115200)\n(linea CSV: idx,true,pred,p0,p1,p2,features...)"]
+    Pred --> LED["LED_PIN (ON si ANOMALIA)"]
+  end
 ```
 
 ---
